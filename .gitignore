@@ -1,0 +1,39 @@
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── uv ────────────────────────────────────────────────────────────────────────
+uv.lock
+
+# ── Vector store (local DB, rebuilt via ingest.py) ────────────────────────────
+chroma_db/
+
+# ── Docs (contain personal/sensitive files) ───────────────────────────────────
+docs/
+!docs/.gitkeep
+
+# ── OS & editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.suo
+*.user
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+diagram.html
+*.log
