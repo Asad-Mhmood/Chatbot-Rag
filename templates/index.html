@@ -3,380 +3,969 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>RAG Chatbot</title>
+  <title>DocMind — RAG Chatbot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f0f2f5;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d27;
+      --surface-2:   #22263a;
+      --border:      #2e3352;
+      --accent:      #6c63ff;
+      --accent-dim:  #3d3a7a;
+      --accent-hover:#7d75ff;
+      --danger:      #e05252;
+      --success:     #3ecf8e;
+      --text:        #e8eaf6;
+      --text-muted:  #8892b0;
+      --text-faint:  #4a5280;
+      --user-bubble: #6c63ff;
+      --bot-bubble:  #1e2235;
+      --radius:      12px;
+      --radius-sm:   8px;
     }
 
-    header {
-      background: #1a1a2e;
-      color: white;
-      padding: 14px 24px;
+    html, body {
+      height: 100%;
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* ── App shell ──────────────────────────────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: 100vh;
+      height: 100vh;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       SIDEBAR
+    ══════════════════════════════════════════════════════════════════════ */
+    #sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Brand */
+    #brand {
+      padding: 22px 20px 18px;
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 10px;
     }
 
-    header h1 { font-size: 1.2rem; font-weight: 600; }
-    header p  { font-size: 0.8rem; opacity: 0.6; margin-top: 2px; }
+    #brand-icon {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
 
+    #brand h1 { font-size: 1rem; font-weight: 700; letter-spacing: -0.3px; }
+    #brand p  { font-size: 0.7rem; color: var(--text-muted); margin-top: 1px; }
+
+    /* Sidebar sections */
+    .sidebar-section {
+      padding: 16px 16px 0;
+    }
+
+    .sidebar-section + .sidebar-section {
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+      padding-top: 16px;
+    }
+
+    .section-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-bottom: 10px;
+    }
+
+    /* KB combobox */
+    #kb-combobox {
+      position: relative;
+      margin-bottom: 10px;
+    }
+
+    #kb-combobox-input-wrap {
+      display: flex;
+      align-items: center;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0 10px;
+      gap: 6px;
+      transition: border-color 0.15s;
+      cursor: text;
+    }
+
+    #kb-combobox-input-wrap:focus-within { border-color: var(--accent); }
+
+    #kb-combobox-input-wrap .combo-icon {
+      font-size: 0.8rem;
+      color: var(--text-faint);
+      flex-shrink: 0;
+    }
+
+    #kb-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      padding: 9px 0;
+      font-size: 0.82rem;
+      color: var(--text);
+      font-family: inherit;
+      min-width: 0;
+    }
+
+    #kb-input::placeholder { color: var(--text-faint); }
+
+    #kb-chevron {
+      font-size: 0.65rem;
+      color: var(--text-faint);
+      cursor: pointer;
+      padding: 4px;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    #kb-chevron.open { transform: rotate(180deg); }
+
+    /* Dropdown */
+    #kb-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0; right: 0;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    #kb-dropdown.open { display: block; }
+
+    .kb-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .kb-option:hover { background: var(--surface); color: var(--text); }
+
+    .kb-option.active {
+      color: var(--text);
+      background: var(--accent-dim);
+    }
+
+    .kb-option .kb-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-faint);
+      flex-shrink: 0;
+    }
+
+    .kb-option.active .kb-dot { background: var(--accent); }
+
+    .kb-option .kb-option-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kb-option .kb-active-tag {
+      font-size: 0.65rem;
+      background: var(--accent-dim);
+      color: #a89dff;
+      border: 1px solid var(--accent);
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+
+    #kb-dropdown-empty {
+      padding: 10px 12px;
+      font-size: 0.78rem;
+      color: var(--text-faint);
+      font-style: italic;
+    }
+
+    /* Confirm new KB hint */
+    #kb-create-hint {
+      display: none;
+      font-size: 0.72rem;
+      color: var(--text-faint);
+      padding: 4px 2px 6px;
+    }
+
+    #kb-create-hint span { color: var(--accent); }
+
+    /* Upload */
+    #upload-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 10px;
+    }
+
+    #upload-zone:hover { border-color: var(--accent); background: rgba(108,99,255,0.06); }
+    #upload-zone.drag-over { border-color: var(--accent); background: rgba(108,99,255,0.1); }
+
+    #upload-zone p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
+    #upload-zone span { font-size: 1.3rem; }
+    #upload-file { display: none; }
+
+    #upload-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      min-height: 16px;
+      padding: 0 2px;
+      margin-bottom: 8px;
+    }
+
+    #upload-status.success { color: var(--success); }
+    #upload-status.error   { color: var(--danger); }
+
+    /* Upload progress bar */
+    #upload-progress-wrap {
+      display: none;
+      background: var(--surface-2);
+      border-radius: 4px;
+      height: 4px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+
+    #upload-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+
+    /* Doc list */
+    #doc-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow-y: auto;
+      flex: 1;
+      padding-bottom: 16px;
+    }
+
+    .doc-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      font-size: 0.77rem;
+      color: var(--text-muted);
+    }
+
+    .doc-item span.icon { font-size: 0.85rem; flex-shrink: 0; }
+
+    .doc-item .doc-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .doc-item .doc-check { color: var(--success); font-size: 0.75rem; flex-shrink: 0; }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       MAIN CHAT PANEL
+    ══════════════════════════════════════════════════════════════════════ */
+    #main {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    /* Top bar */
+    #topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    #topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #active-kb-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    #active-kb-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    #topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #voice-indicator {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      min-width: 180px;
+      text-align: right;
+    }
+
+    #live-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    #live-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    #live-btn.active {
+      background: rgba(62,207,142,0.12);
+      border-color: var(--success);
+      color: var(--success);
+      animation: pulse-green 1.8s infinite;
+    }
+
+    #live-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* Chat messages */
     #chat-container {
       flex: 1;
       overflow-y: auto;
-      padding: 24px;
+      padding: 28px 24px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
-      max-width: 800px;
-      width: 100%;
-      margin: 0 auto;
+      gap: 20px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
 
+    #chat-container::-webkit-scrollbar { width: 5px; }
+    #chat-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* Welcome */
+    #welcome {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      text-align: center;
+      padding: 60px 20px;
+      gap: 12px;
+    }
+
+    #welcome-icon {
+      width: 56px; height: 56px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.6rem;
+      margin-bottom: 4px;
+    }
+
+    #welcome h2 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    #welcome p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      max-width: 340px;
+      line-height: 1.6;
+    }
+
+    /* Messages */
     .message {
       display: flex;
       flex-direction: column;
-      max-width: 75%;
+      max-width: 72%;
+      gap: 4px;
     }
 
-    .message.user  { align-self: flex-end; align-items: flex-end; }
-    .message.bot   { align-self: flex-start; align-items: flex-start; }
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.bot  { align-self: flex-start; align-items: flex-start; }
+
+    .msg-meta {
+      font-size: 0.68rem;
+      color: var(--text-faint);
+      padding: 0 4px;
+    }
 
     .bubble {
       padding: 12px 16px;
       border-radius: 16px;
-      font-size: 0.92rem;
-      line-height: 1.5;
+      font-size: 0.88rem;
+      line-height: 1.65;
       white-space: pre-wrap;
+      word-break: break-word;
     }
 
     .user .bubble {
-      background: #1a1a2e;
+      background: var(--user-bubble);
       color: white;
       border-bottom-right-radius: 4px;
     }
 
     .bot .bubble {
-      background: white;
-      color: #333;
+      background: var(--bot-bubble);
+      color: var(--text);
       border-bottom-left-radius: 4px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      border: 1px solid var(--border);
+    }
+
+    .typing .bubble {
+      color: var(--text-faint);
+      font-style: italic;
     }
 
     .sources {
-      font-size: 0.75rem;
-      color: #888;
-      margin-top: 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
       padding: 0 4px;
     }
 
     .sources span {
-      background: #e8eaf6;
-      color: #3949ab;
-      padding: 2px 8px;
-      border-radius: 10px;
-      margin-right: 4px;
-      display: inline-block;
-      margin-top: 3px;
+      background: rgba(108,99,255,0.12);
+      color: #a89dff;
+      border: 1px solid rgba(108,99,255,0.25);
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 0.7rem;
     }
 
-    .typing .bubble {
-      color: #aaa;
-      font-style: italic;
-    }
-
+    /* Input area */
     #input-area {
-      background: white;
-      border-top: 1px solid #e0e0e0;
-      padding: 16px 24px;
+      padding: 16px 24px 20px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
     }
 
     #input-row {
       display: flex;
-      gap: 10px;
-      max-width: 800px;
-      margin: 0 auto;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 6px 6px 6px 16px;
+      transition: border-color 0.15s;
     }
+
+    #input-row:focus-within { border-color: var(--accent); }
 
     #question {
       flex: 1;
-      padding: 12px 16px;
-      border: 1px solid #ddd;
-      border-radius: 24px;
-      font-size: 0.95rem;
+      background: transparent;
+      border: none;
       outline: none;
-      transition: border-color 0.2s;
+      font-size: 0.9rem;
+      color: var(--text);
+      font-family: inherit;
+      padding: 6px 0;
     }
 
-    #question:focus { border-color: #1a1a2e; }
+    #question::placeholder { color: var(--text-faint); }
+
+    .icon-btn {
+      width: 38px; height: 38px;
+      border: none;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      flex-shrink: 0;
+      background: transparent;
+      color: var(--text-muted);
+    }
+
+    .icon-btn:hover { background: var(--surface); color: var(--text); }
+    .icon-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    #mic-btn.recording {
+      background: rgba(224,82,82,0.15);
+      color: var(--danger);
+      animation: pulse-red 1s infinite;
+    }
 
     #send-btn {
-      background: #1a1a2e;
+      background: var(--accent);
       color: white;
-      border: none;
-      border-radius: 24px;
-      padding: 12px 24px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
+      border-radius: 10px;
     }
 
-    #send-btn:hover    { background: #16213e; }
-    #send-btn:disabled { background: #aaa; cursor: not-allowed; }
+    #send-btn:hover { background: var(--accent-hover); color: white; }
+    #send-btn:disabled { background: var(--text-faint); cursor: not-allowed; }
 
-    #mic-btn {
-      background: #1a1a2e;
-      color: white;
-      border: none;
-      border-radius: 50%;
-      width: 46px;
-      height: 46px;
-      font-size: 1.1rem;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    #mic-btn:hover    { background: #16213e; }
-    #mic-btn:disabled { background: #aaa; cursor: not-allowed; }
-    #mic-btn.recording {
-      background: #c0392b;
-      animation: pulse 1s infinite;
-    }
-
-    #live-btn {
-      background: transparent;
-      color: #1a1a2e;
-      border: 2px solid #1a1a2e;
-      border-radius: 24px;
-      padding: 10px 18px;
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
-    #live-btn:hover  { background: #1a1a2e; color: white; }
-    #live-btn.active {
-      background: #2e7d32;
-      border-color: #2e7d32;
-      color: white;
-      animation: pulse-green 1.5s infinite;
+    /* Animations */
+    @keyframes pulse-red {
+      0%   { box-shadow: 0 0 0 0 rgba(224,82,82,0.4); }
+      70%  { box-shadow: 0 0 0 7px rgba(224,82,82,0); }
+      100% { box-shadow: 0 0 0 0 rgba(224,82,82,0); }
     }
 
     @keyframes pulse-green {
-      0%   { box-shadow: 0 0 0 0 rgba(46,125,50,0.5); }
-      70%  { box-shadow: 0 0 0 8px rgba(46,125,50,0); }
-      100% { box-shadow: 0 0 0 0 rgba(46,125,50,0); }
+      0%   { box-shadow: 0 0 0 0 rgba(62,207,142,0.4); }
+      70%  { box-shadow: 0 0 0 7px rgba(62,207,142,0); }
+      100% { box-shadow: 0 0 0 0 rgba(62,207,142,0); }
     }
 
-    @keyframes pulse {
-      0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(192,57,43,0.5); }
-      70%  { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(192,57,43,0); }
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(192,57,43,0); }
+    /* Scrollbar for sidebar lists */
+    #kb-list, #doc-list {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
 
-    #voice-status {
-      text-align: center;
-      font-size: 0.78rem;
-      color: #c0392b;
-      height: 18px;
-      margin-bottom: 6px;
-      max-width: 800px;
-      margin-left: auto;
-      margin-right: auto;
+    /* Typing dots animation */
+    .typing-dots span {
+      display: inline-block;
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--text-faint);
+      margin: 0 2px;
+      animation: dot-bounce 1.2s infinite;
     }
 
-    #welcome {
-      text-align: center;
-      color: #aaa;
-      margin-top: 60px;
-    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-    #welcome h2 { font-size: 1.4rem; color: #555; margin-bottom: 8px; }
-    #welcome p  { font-size: 0.9rem; }
-
-    /* ── Upload panel ───────────────────────────────────────────────────── */
-    #upload-panel {
-      background: white;
-      border-bottom: 1px solid #e0e0e0;
-      padding: 10px 24px;
-    }
-
-    #upload-inner {
-      max-width: 800px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    #upload-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: #f5f5f5;
-      border: 1.5px dashed #bbb;
-      border-radius: 20px;
-      padding: 7px 18px;
-      font-size: 0.85rem;
-      color: #555;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-    }
-
-    #upload-label:hover { border-color: #1a1a2e; background: #eef; color: #1a1a2e; }
-    #upload-file { display: none; }
-
-    #upload-status {
-      font-size: 0.82rem;
-      color: #888;
-      flex: 1;
-    }
-
-    #upload-status.success { color: #2e7d32; }
-    #upload-status.error   { color: #c0392b; }
-
-    #doc-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      width: 100%;
-      margin-top: 2px;
-    }
-
-    .doc-tag {
-      background: #e8f5e9;
-      color: #2e7d32;
-      font-size: 0.75rem;
-      padding: 3px 10px;
-      border-radius: 10px;
+    @keyframes dot-bounce {
+      0%, 80%, 100% { transform: translateY(0); }
+      40%           { transform: translateY(-5px); }
     }
   </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <h1>📄 RAG Chatbot</h1>
-    <p>Ask anything about your documents</p>
-  </div>
-</header>
+<div id="app">
 
-<div id="upload-panel">
-  <div id="upload-inner">
-    <label id="upload-label" for="upload-file">
-      📎 Upload Document
-    </label>
-    <input id="upload-file" type="file" accept=".pdf,.txt" onchange="uploadDocument(this)"/>
-    <span id="upload-status">PDF or TXT — uploaded docs are indexed instantly</span>
-    <div id="doc-list"></div>
-  </div>
-</div>
+  <!-- ══════════════════════ SIDEBAR ══════════════════════════════════════ -->
+  <aside id="sidebar">
 
-<div id="chat-container">
-  <div id="welcome">
-    <h2>Hello! How can I help?</h2>
-    <p>Ask me anything about the uploaded documents.</p>
-  </div>
-</div>
+    <!-- Brand -->
+    <div id="brand">
+      <div id="brand-icon">🧠</div>
+      <div>
+        <h1>DocMind</h1>
+        <p>AI Document Intelligence</p>
+      </div>
+    </div>
 
-<div id="input-area">
-  <div id="voice-status"></div>
-  <div id="input-row">
-    <button id="live-btn" onclick="toggleLiveMode()" title="Live conversation mode">🔁 Live</button>
-    <button id="mic-btn" onclick="toggleRecording()" title="Click to record voice">🎤</button>
-    <input
-      id="question"
-      type="text"
-      placeholder="Ask a question or click 🎤 to speak..."
-      autocomplete="off"
-    />
-    <button id="send-btn" onclick="sendMessage()">Send</button>
+    <!-- Knowledge Bases -->
+    <div class="sidebar-section">
+      <div class="section-label">Knowledge Base</div>
+
+      <div id="kb-combobox">
+        <div id="kb-combobox-input-wrap" onclick="focusKbInput()">
+          <span class="combo-icon">🗂</span>
+          <input
+            id="kb-input"
+            type="text"
+            placeholder="Select or create a KB…"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
+          />
+          <span id="kb-chevron" onclick="toggleKbDropdown(event)">▼</span>
+        </div>
+        <div id="kb-dropdown"><!-- filled by JS --></div>
+      </div>
+
+      <div id="kb-create-hint">Press Enter to create <span id="kb-hint-name"></span></div>
+    </div>
+
+    <!-- Upload -->
+    <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+      <div class="section-label">Documents</div>
+
+      <label id="upload-zone" for="upload-file">
+        <span>📄</span>
+        <p>Click to upload PDFs or TXTs</p>
+      </label>
+      <input id="upload-file" type="file" accept=".pdf,.txt" multiple onchange="uploadDocuments(this)"/>
+
+      <div id="upload-status"></div>
+      <div id="upload-progress-wrap">
+        <div id="upload-progress-bar"></div>
+      </div>
+
+      <div id="doc-list"><!-- filled by JS --></div>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════════ MAIN PANEL ═══════════════════════════════════ -->
+  <div id="main">
+
+    <!-- Top bar -->
+    <div id="topbar">
+      <div id="topbar-left">
+        <span id="active-kb-label">Active KB</span>
+        <span id="active-kb-name">default</span>
+      </div>
+      <div id="topbar-right">
+        <span id="voice-indicator"></span>
+        <button id="live-btn" onclick="toggleLiveMode()">
+          <span id="live-dot"></span>
+          <span id="live-label">Live Voice</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div id="chat-container">
+      <div id="welcome">
+        <div id="welcome-icon">🧠</div>
+        <h2>Ask your documents anything</h2>
+        <p>Select a knowledge base from the sidebar, upload documents, then start a conversation by typing or using voice.</p>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div id="input-area">
+      <div id="input-row">
+        <input
+          id="question"
+          type="text"
+          placeholder="Ask a question…"
+          autocomplete="off"
+        />
+        <button class="icon-btn" id="mic-btn" onclick="toggleRecording()" title="Voice input">🎤</button>
+        <button class="icon-btn" id="send-btn" onclick="sendMessage()" title="Send">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
   </div>
 </div>
 
 <script>
-  let sessionId   = null;
+  let sessionId     = null;
+  let activeKbId    = "default";
   let mediaRecorder = null;
   let audioChunks   = [];
   let isRecording   = false;
-  let liveMode      = false;   // continuous conversation mode
+  let liveMode      = false;
 
-  // ── Session ──────────────────────────────────────────────────────────────
-  async function initSession() {
-    const res = await fetch("/session/new", { method: "POST" });
+  // ── Init ─────────────────────────────────────────────────────────────────
+  async function init() {
+    const res  = await fetch("/session/new", { method: "POST" });
     const data = await res.json();
-    sessionId = data.session_id;
-    await loadDocuments();
+    sessionId  = data.session_id;
+    await loadKnowledgeBases();
   }
 
-  // ── Document upload ──────────────────────────────────────────────────────
-  async function loadDocuments() {
-    const res = await fetch("/documents");
+  // ── Knowledge bases ───────────────────────────────────────────────────────
+  let allKbs = [];
+
+  async function loadKnowledgeBases() {
+    const res  = await fetch("/knowledge-bases");
     const data = await res.json();
-    renderDocTags(data.documents);
+    allKbs = data.knowledge_bases;
+    if (!allKbs.includes(activeKbId)) activeKbId = allKbs[0] || "default";
+    renderKbDropdown(allKbs);
+    setActiveKb(activeKbId, false);
   }
 
-  function renderDocTags(docs) {
-    const list = document.getElementById("doc-list");
-    list.innerHTML = docs.map(d => `<span class="doc-tag">✅ ${d}</span>`).join("");
-  }
+  function renderKbDropdown(kbs, filter = "") {
+    const dropdown = document.getElementById("kb-dropdown");
+    const lower    = filter.toLowerCase();
+    const filtered = kbs.filter(k => k.toLowerCase().includes(lower));
 
-  async function uploadDocument(input) {
-    const file = input.files[0];
-    if (!file) return;
-
-    const status = document.getElementById("upload-status");
-    const label  = document.getElementById("upload-label");
-
-    status.textContent = `Uploading "${file.name}"…`;
-    status.className = "";
-    label.style.pointerEvents = "none";
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res  = await fetch("/upload", { method: "POST", body: formData });
-      const data = await res.json();
-
-      if (res.ok) {
-        status.textContent = `✔ "${file.name}" indexed (${data.chunks} chunks)`;
-        status.className = "success";
-        await loadDocuments();
-        const welcome = document.getElementById("welcome");
-        if (welcome) welcome.remove();
-        appendMessage("bot", `"${file.name}" has been uploaded and indexed. You can now ask questions about it.`);
-      } else {
-        status.textContent = `✖ ${data.error}`;
-        status.className = "error";
-      }
-    } catch (err) {
-      status.textContent = "Upload failed. Please try again.";
-      status.className = "error";
+    if (!filtered.length) {
+      dropdown.innerHTML = `<div id="kb-dropdown-empty">No matching knowledge bases</div>`;
+      return;
     }
 
-    label.style.pointerEvents = "";
-    input.value = "";
+    dropdown.innerHTML = filtered.map(kb => `
+      <div class="kb-option ${kb === activeKbId ? 'active' : ''}" onmousedown="selectKb('${kb}')">
+        <span class="kb-dot"></span>
+        <span class="kb-option-name">${kb}</span>
+        ${kb === activeKbId ? '<span class="kb-active-tag">active</span>' : ''}
+      </div>
+    `).join("");
   }
 
-  // ── UI helpers ───────────────────────────────────────────────────────────
-  function setVoiceStatus(msg) {
-    document.getElementById("voice-status").textContent = msg;
+  function focusKbInput() {
+    document.getElementById("kb-input").focus();
+  }
+
+  function toggleKbDropdown(e) {
+    e.stopPropagation();
+    const dropdown = document.getElementById("kb-dropdown");
+    const chevron  = document.getElementById("kb-chevron");
+    const isOpen   = dropdown.classList.contains("open");
+    if (isOpen) {
+      closeKbDropdown();
+    } else {
+      renderKbDropdown(allKbs, "");
+      dropdown.classList.add("open");
+      chevron.classList.add("open");
+      document.getElementById("kb-input").focus();
+    }
+  }
+
+  function closeKbDropdown() {
+    document.getElementById("kb-dropdown").classList.remove("open");
+    document.getElementById("kb-chevron").classList.remove("open");
+  }
+
+  function selectKb(kbId) {
+    setActiveKb(kbId);
+    const input = document.getElementById("kb-input");
+    input.value = "";
+    document.getElementById("kb-create-hint").style.display = "none";
+    closeKbDropdown();
+  }
+
+  function setActiveKb(kbId, reload = true) {
+    activeKbId = kbId;
+    document.getElementById("active-kb-name").textContent = kbId;
+    // Sync input placeholder to show active KB
+    const input = document.getElementById("kb-input");
+    if (!input.value) input.placeholder = kbId;
+    renderKbDropdown(allKbs, "");
+    if (reload) loadDocuments();
+  }
+
+  // Combobox input behaviour
+  document.getElementById("kb-input").addEventListener("focus", () => {
+    renderKbDropdown(allKbs, "");
+    document.getElementById("kb-dropdown").classList.add("open");
+    document.getElementById("kb-chevron").classList.add("open");
+  });
+
+  document.getElementById("kb-input").addEventListener("input", function () {
+    const val = this.value.trim();
+    renderKbDropdown(allKbs, val);
+    document.getElementById("kb-dropdown").classList.add("open");
+    document.getElementById("kb-chevron").classList.add("open");
+
+    const hint     = document.getElementById("kb-create-hint");
+    const hintName = document.getElementById("kb-hint-name");
+    if (val && !allKbs.includes(val)) {
+      hint.style.display = "block";
+      hintName.textContent = `"${val}"`;
+    } else {
+      hint.style.display = "none";
+    }
+  });
+
+  document.getElementById("kb-input").addEventListener("keydown", async function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const val = this.value.trim();
+      if (!val) return;
+
+      if (allKbs.includes(val)) {
+        selectKb(val);
+        return;
+      }
+
+      // Create new KB
+      const res  = await fetch("/knowledge-bases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: val }),
+      });
+      const data = await res.json();
+      if (data.error) { showUploadStatus(data.error, "error"); return; }
+
+      this.value = "";
+      document.getElementById("kb-create-hint").style.display = "none";
+      await loadKnowledgeBases();
+      selectKb(data.kb_id);
+    }
+    if (e.key === "Escape") {
+      closeKbDropdown();
+      this.blur();
+    }
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("kb-combobox").contains(e.target)) {
+      closeKbDropdown();
+    }
+  });
+
+  // ── Documents ─────────────────────────────────────────────────────────────
+  async function loadDocuments() {
+    const res  = await fetch(`/documents?kb_id=${encodeURIComponent(activeKbId)}`);
+    const data = await res.json();
+    const list = document.getElementById("doc-list");
+
+    if (!data.documents.length) {
+      list.innerHTML = `<p style="font-size:0.75rem;color:var(--text-faint);padding:4px 2px;">No documents yet</p>`;
+      return;
+    }
+
+    list.innerHTML = data.documents.map(d => `
+      <div class="doc-item">
+        <span class="icon">📄</span>
+        <span class="doc-name" title="${d}">${d}</span>
+        <span class="doc-check">✓</span>
+      </div>
+    `).join("");
+  }
+
+  function showUploadStatus(msg, type = "") {
+    const el = document.getElementById("upload-status");
+    el.textContent = msg;
+    el.className = type;
+  }
+
+  let isUploading = false;
+
+  async function uploadDocuments(input) {
+    const files = Array.from(input.files);
+    if (!files.length || isUploading) return;
+
+    isUploading = true;
+    const zone     = document.getElementById("upload-zone");
+    const progWrap = document.getElementById("upload-progress-wrap");
+    const progBar  = document.getElementById("upload-progress-bar");
+
+    zone.style.pointerEvents = "none";
+    zone.style.opacity       = "0.5";
+    progWrap.style.display   = "block";
+    progBar.style.width      = "0%";
+
+    const total    = files.length;
+    const results  = { ok: [], fail: [] };
+
+    for (let i = 0; i < total; i++) {
+      const file = files[i];
+      showUploadStatus(`Uploading ${i + 1} of ${total}: ${file.name}…`);
+      progBar.style.width = `${Math.round((i / total) * 100)}%`;
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("kb_id", activeKbId);
+
+      try {
+        const res  = await fetch("/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (res.ok) results.ok.push(file.name);
+        else        results.fail.push(`${file.name} (${data.error})`);
+      } catch {
+        results.fail.push(`${file.name} (network error)`);
+      }
+    }
+
+    progBar.style.width = "100%";
+    await loadDocuments();
+
+    // Summary message
+    if (results.fail.length === 0) {
+      const noun = total === 1 ? "document" : "documents";
+      showUploadStatus(`✓ ${total} ${noun} indexed into "${activeKbId}"`, "success");
+      appendMessage("bot",
+        total === 1
+          ? `"${results.ok[0]}" has been indexed into "${activeKbId}". Ask me anything about it.`
+          : `${total} documents indexed into "${activeKbId}":\n${results.ok.map(n => `• ${n}`).join("\n")}`
+      );
+    } else {
+      showUploadStatus(
+        `✓ ${results.ok.length} indexed  ✕ ${results.fail.length} failed`,
+        results.ok.length ? "success" : "error"
+      );
+    }
+
+    // Reset
+    setTimeout(() => { progWrap.style.display = "none"; progBar.style.width = "0%"; }, 1200);
+    zone.style.pointerEvents = "";
+    zone.style.opacity       = "";
+    input.value              = "";
+    isUploading              = false;
+  }
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  function setVoiceIndicator(msg) {
+    document.getElementById("voice-indicator").textContent = msg;
+  }
+
+  function timestamp() {
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
   function appendMessage(role, text, sources = []) {
@@ -387,15 +976,26 @@
     const msg = document.createElement("div");
     msg.className = `message ${role}`;
 
+    const meta = document.createElement("div");
+    meta.className = "msg-meta";
+    meta.textContent = role === "user" ? `You · ${timestamp()}` : role === "bot typing" ? "" : `DocMind · ${timestamp()}`;
+
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = text;
+
+    if (role === "bot typing") {
+      bubble.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
+    } else {
+      bubble.textContent = text;
+    }
+
+    msg.appendChild(meta);
     msg.appendChild(bubble);
 
     if (sources.length > 0) {
       const src = document.createElement("div");
       src.className = "sources";
-      src.innerHTML = "📎 Sources: " + sources.map(s => `<span>${s}</span>`).join("");
+      src.innerHTML = sources.map(s => `<span>📎 ${s}</span>`).join("");
       msg.appendChild(src);
     }
 
@@ -404,17 +1004,14 @@
     return msg;
   }
 
-  // ── Text-to-speech ───────────────────────────────────────────────────────
+  // ── TTS ───────────────────────────────────────────────────────────────────
   function speak(text, onDone) {
     if (!window.speechSynthesis) { onDone && onDone(); return; }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate  = 1.0;
     utt.pitch = 1.0;
-    utt.onend = () => { onDone && onDone(); };
-    // fallback: if onend doesn't fire (some browsers), estimate duration
-    const fallbackMs = Math.max(3000, text.length * 55);
-    const fallback = setTimeout(() => { onDone && onDone(); }, fallbackMs);
+    const fallback = setTimeout(() => { onDone && onDone(); }, Math.max(3000, text.length * 55));
     utt.onend = () => { clearTimeout(fallback); onDone && onDone(); };
     window.speechSynthesis.speak(utt);
   }
@@ -423,174 +1020,409 @@
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
-  // ── Chat ─────────────────────────────────────────────────────────────────
+  // ── Interrupt / turn control ──────────────────────────────────────────────
+  let currentTurnId   = 0;
+  let preAnswerTimer  = null;
+  let activeFetchCtrl = null;
+
+  function interruptCurrentTurn() {
+    currentTurnId++;
+    if (preAnswerTimer)  { clearTimeout(preAnswerTimer); preAnswerTimer  = null; }
+    if (activeFetchCtrl) { activeFetchCtrl.abort();      activeFetchCtrl = null; }
+    stopSpeaking();
+  }
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
   async function sendMessage(questionOverride) {
-    const input  = document.getElementById("question");
-    const btn    = document.getElementById("send-btn");
-    const micBtn = document.getElementById("mic-btn");
+    const input   = document.getElementById("question");
+    const sendBtn = document.getElementById("send-btn");
+    const micBtn  = document.getElementById("mic-btn");
     const question = (questionOverride || input.value).trim();
     if (!question || !sessionId) return;
 
-    input.value  = "";
-    btn.disabled = true;
-    micBtn.disabled = true;
+    interruptCurrentTurn();
+    const myTurn = currentTurnId;
+
+    input.value      = "";
+    sendBtn.disabled = true;
+    micBtn.disabled  = true;
 
     appendMessage("user", question);
-    const typing = appendMessage("bot typing", "Thinking...");
+
+    // 2.5 s pause before answering (cancellable)
+    if (liveMode) {
+      setVoiceIndicator("⏳ Processing…");
+      await new Promise(resolve => { preAnswerTimer = setTimeout(resolve, 2500); });
+      preAnswerTimer = null;
+      if (currentTurnId !== myTurn) { sendBtn.disabled = false; micBtn.disabled = false; return; }
+    }
+
+    const typing = appendMessage("bot typing", "");
 
     try {
-      const res  = await fetch("/chat", {
+      activeFetchCtrl = new AbortController();
+      const res = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, question }),
+        body: JSON.stringify({ session_id: sessionId, question, kb_id: activeKbId }),
+        signal: activeFetchCtrl.signal,
       });
-      const data = await res.json();
+      activeFetchCtrl = null;
+      if (currentTurnId !== myTurn) { typing.remove(); sendBtn.disabled = false; micBtn.disabled = false; return; }
 
+      const data = await res.json();
       typing.remove();
       appendMessage("bot", data.answer, data.sources);
 
-      if (liveMode) {
-        // Speak answer, then auto-start recording for next turn
-        setVoiceStatus("🔊 Speaking…");
+      if (liveMode && currentTurnId === myTurn) {
+        setVoiceIndicator("🔊 Speaking…");
         speak(data.answer, () => {
-          if (liveMode) {
-            setVoiceStatus("");
-            startRecording();   // next turn
+          if (liveMode && currentTurnId === myTurn) {
+            livePipelineState = "listening";
+            setVoiceIndicator("🟢 Listening…");
           }
         });
-      } else {
+      } else if (!liveMode) {
         speak(data.answer);
       }
-
     } catch (err) {
+      if (err.name === "AbortError") { sendBtn.disabled = false; micBtn.disabled = false; return; }
       typing.remove();
-      appendMessage("bot", "Sorry, something went wrong. Please try again.");
-      if (liveMode) startRecording();
+      appendMessage("bot", "Something went wrong. Please try again.");
     }
 
-    btn.disabled    = false;
-    micBtn.disabled = false;
+    sendBtn.disabled = false;
+    micBtn.disabled  = false;
     if (!liveMode) input.focus();
   }
 
   // ── Live mode ─────────────────────────────────────────────────────────────
+  // One persistent mic stream stays open the ENTIRE time live mode is active.
+  // VAD runs on it continuously — even during TTS and processing.
+  // A separate MediaRecorder captures only when the user is speaking.
+
+  let liveStream      = null;   // persistent mic stream (open whole live session)
+  let liveAudioCtx    = null;
+  let liveAnalyser    = null;
+  let liveSource      = null;
+  let liveRecorder    = null;   // MediaRecorder for current speech segment
+  let liveChunks      = [];
+  let liveMimeType    = "";
+  let livePipelineState = "idle"; // "idle" | "listening" | "recording" | "processing"
+  let vadSilenceTimer = null;
+  let vadSpeakStart   = 0;
+  let vadActive       = false;
+
+  const VAD_THRESHOLD     = 14;    // RMS 0-255
+  const VAD_SILENCE_MS    = 1300;  // silence after speech → auto-stop
+  const VAD_MIN_SPEECH_MS = 350;   // min speech duration to accept
+
   function toggleLiveMode() {
     liveMode = !liveMode;
-    const btn = document.getElementById("live-btn");
+    const btn   = document.getElementById("live-btn");
+    const label = document.getElementById("live-label");
 
     if (liveMode) {
       btn.classList.add("active");
-      btn.textContent = "⏹ Stop Live";
-      setVoiceStatus("🟢 Live mode on — listening…");
-      startRecording();
+      label.textContent = "Stop Live";
+      startLivePipeline();
     } else {
       btn.classList.remove("active");
-      btn.textContent = "🔁 Live";
-      stopSpeaking();
-      if (isRecording) stopRecording(/* silent */ true);
-      setVoiceStatus("");
+      label.textContent = "Live Voice";
+      stopLivePipeline();
     }
   }
 
-  // ── Voice recording ──────────────────────────────────────────────────────
-  async function toggleRecording() {
-    if (isRecording) stopRecording();
-    else              await startRecording();
-  }
-
-  async function startRecording() {
+  async function startLivePipeline() {
     try {
-      // Stop any ongoing TTS the moment mic opens
-      stopSpeaking();
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunks  = [];
-
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
-        .find(t => MediaRecorder.isTypeSupported(t)) || "";
-
-      mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-
-      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        await transcribeAudio(mimeType);
-      };
-
-      mediaRecorder.start();
-      isRecording = true;
-
-      const micBtn = document.getElementById("mic-btn");
-      micBtn.classList.add("recording");
-      micBtn.textContent = "⏹";
-      if (!liveMode) setVoiceStatus("🔴 Recording… click ⏹ to stop");
-      else           setVoiceStatus("🔴 Listening… click mic to send");
-
-    } catch (err) {
-      setVoiceStatus("Microphone access denied.");
-      console.error(err);
-      if (liveMode) toggleLiveMode(); // exit live mode if mic fails
-    }
-  }
-
-  // silent=true means don't reset live mode status
-  function stopRecording(silent = false) {
-    if (mediaRecorder && isRecording) {
-      mediaRecorder.stop();
-      isRecording = false;
-
-      const micBtn = document.getElementById("mic-btn");
-      micBtn.classList.remove("recording");
-      micBtn.textContent = "🎤";
-      if (!silent) setVoiceStatus("Processing…");
-    }
-  }
-
-  async function transcribeAudio(mimeType) {
-    const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
-    const blob = new Blob(audioChunks, { type: mimeType || "audio/webm" });
-
-    // If blob is too small it's silence — skip in live mode
-    if (liveMode && blob.size < 1000) {
-      setVoiceStatus("🟢 Live mode on — listening…");
-      startRecording();
+      liveStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setVoiceIndicator("Microphone access denied.");
+      liveMode = false;
+      document.getElementById("live-btn").classList.remove("active");
+      document.getElementById("live-label").textContent = "Live Voice";
       return;
     }
 
+    liveMimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+      .find(t => MediaRecorder.isTypeSupported(t)) || "";
+
+    // Set up VAD on the persistent stream
+    liveAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    liveAnalyser = liveAudioCtx.createAnalyser();
+    liveAnalyser.fftSize = 512;
+    liveSource   = liveAudioCtx.createMediaStreamSource(liveStream);
+    liveSource.connect(liveAnalyser);
+
+    vadActive           = true;
+    livePipelineState   = "listening";
+    setVoiceIndicator("🟢 Listening…");
+    updateMicBtn(false);
+
+    const buf = new Uint8Array(liveAnalyser.fftSize);
+
+    function vadTick() {
+      if (!vadActive) return;
+
+      liveAnalyser.getByteTimeDomainData(buf);
+      let sumSq = 0;
+      for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sumSq += v * v; }
+      const rms = Math.sqrt(sumSq / buf.length);
+
+      if (rms > VAD_THRESHOLD) {
+        // ── Voice detected ──────────────────────────────────────────────
+        if (livePipelineState === "listening") {
+          // Start capturing
+          livePipelineState = "recording";
+          vadSpeakStart     = Date.now();
+          liveChunks        = [];
+          liveRecorder      = new MediaRecorder(liveStream, liveMimeType ? { mimeType: liveMimeType } : {});
+          liveRecorder.ondataavailable = e => { if (e.data.size > 0) liveChunks.push(e.data); };
+          liveRecorder.start();
+          updateMicBtn(true);
+          setVoiceIndicator("🔴 Listening…");
+        }
+
+        if (livePipelineState === "processing" || livePipelineState === "speaking") {
+          // User interrupted — stop TTS + cancel current turn
+          interruptCurrentTurn();
+          livePipelineState = "recording";
+          vadSpeakStart     = Date.now();
+          liveChunks        = [];
+          liveRecorder      = new MediaRecorder(liveStream, liveMimeType ? { mimeType: liveMimeType } : {});
+          liveRecorder.ondataavailable = e => { if (e.data.size > 0) liveChunks.push(e.data); };
+          liveRecorder.start();
+          updateMicBtn(true);
+          setVoiceIndicator("🔴 Listening…");
+        }
+
+        // Reset silence timer on every voiced frame
+        if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
+
+      } else {
+        // ── Silence ─────────────────────────────────────────────────────
+        if (livePipelineState === "recording" && !vadSilenceTimer) {
+          vadSilenceTimer = setTimeout(() => {
+            vadSilenceTimer = null;
+            const duration  = Date.now() - vadSpeakStart;
+            if (liveRecorder && liveRecorder.state === "recording") {
+              liveRecorder.onstop = async () => {
+                if (!liveMode) return;
+                if (duration < VAD_MIN_SPEECH_MS) {
+                  // Too short — noise, go back to listening
+                  livePipelineState = "listening";
+                  updateMicBtn(false);
+                  setVoiceIndicator("🟢 Listening…");
+                  return;
+                }
+                livePipelineState = "processing";
+                updateMicBtn(false);
+                await liveTranscribeAndSend();
+              };
+              liveRecorder.stop();
+            }
+          }, VAD_SILENCE_MS);
+        }
+      }
+
+      requestAnimationFrame(vadTick);
+    }
+
+    requestAnimationFrame(vadTick);
+  }
+
+  // Track when bot is speaking so VAD knows the state
+  const _origSpeak = speak;
+  function speak(text, onDone) {
+    if (liveMode) livePipelineState = "speaking";
+    _origSpeak(text, onDone);
+  }
+
+  function stopLivePipeline() {
+    vadActive = false;
+    interruptCurrentTurn();
+
+    if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
+
+    if (liveRecorder && liveRecorder.state === "recording") {
+      liveRecorder.onstop = null;
+      liveRecorder.stop();
+    }
+    liveRecorder = null;
+
+    if (liveSource)   { try { liveSource.disconnect();   } catch {} liveSource   = null; }
+    if (liveAnalyser) { try { liveAnalyser.disconnect(); } catch {} liveAnalyser = null; }
+    if (liveAudioCtx && liveAudioCtx.state !== "closed") { liveAudioCtx.close().catch(() => {}); liveAudioCtx = null; }
+
+    if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
+
+    livePipelineState = "idle";
+    setVoiceIndicator("");
+    updateMicBtn(false);
+  }
+
+  async function liveTranscribeAndSend() {
+    const myTurn = currentTurnId;
+    const ext    = liveMimeType.includes("ogg") ? "ogg" : liveMimeType.includes("mp4") ? "mp4" : "webm";
+    const blob   = new Blob(liveChunks, { type: liveMimeType || "audio/webm" });
+
+    if (blob.size < 1000) {
+      if (liveMode && currentTurnId === myTurn) {
+        livePipelineState = "listening";
+        setVoiceIndicator("🟢 Listening…");
+      }
+      return;
+    }
+
+    setVoiceIndicator("⏳ Processing…");
     const formData = new FormData();
     formData.append("audio", blob, `recording.${ext}`);
 
     try {
       const res  = await fetch("/transcribe", { method: "POST", body: formData });
+      if (!liveMode || currentTurnId !== myTurn) return;
       const data = await res.json();
 
       if (data.text) {
-        setVoiceStatus("");
-        document.getElementById("question").value = data.text;
         await sendMessage(data.text);
       } else {
-        setVoiceStatus(liveMode ? "🟢 Didn't catch that — listening…" : "Could not understand audio. Try again.");
-        if (liveMode) startRecording();
+        if (!liveMode || currentTurnId !== myTurn) return;
+        livePipelineState = "listening";
+        setVoiceIndicator("🟢 Listening…");
       }
-    } catch (err) {
-      setVoiceStatus("Transcription error.");
-      if (liveMode) startRecording();
-      console.error(err);
+    } catch {
+      if (!liveMode || currentTurnId !== myTurn) return;
+      livePipelineState = "listening";
+      setVoiceIndicator("🟢 Listening…");
     }
   }
 
-  // ── Keyboard shortcut ────────────────────────────────────────────────────
+  function updateMicBtn(recording) {
+    const btn = document.getElementById("mic-btn");
+    if (recording) { btn.classList.add("recording"); btn.textContent = "⏹"; }
+    else           { btn.classList.remove("recording"); btn.textContent = "🎤"; }
+  }
+
+  // ── Manual voice (mic button) — only used outside live mode ──────────────
+  async function toggleRecording() {
+    if (liveMode) return;   // live mode owns the mic
+    if (isRecording) stopRecording();
+    else             await startRecording();
+  }
+
+  // ── VAD state (manual mode only) ─────────────────────────────────────────
+  let vadContext  = null;
+  let vadAnalyser = null;
+  let vadSource   = null;
+  let vadTimer    = null;
+  let vadSpeaking = false;
+  let speechStartTime = 0;
+
+  const MANUAL_VAD_THRESHOLD   = 12;
+  const MANUAL_VAD_SILENCE_MS  = 1400;
+  const MANUAL_VAD_MIN_SPEECH  = 400;
+
+  function stopVAD() {
+    if (vadTimer)    { clearTimeout(vadTimer);  vadTimer    = null; }
+    if (vadSource)   { try { vadSource.disconnect();   } catch {} vadSource   = null; }
+    if (vadAnalyser) { try { vadAnalyser.disconnect(); } catch {} vadAnalyser = null; }
+    if (vadContext && vadContext.state !== "closed") { vadContext.close().catch(() => {}); vadContext = null; }
+    vadSpeaking = false;
+  }
+
+  function startVAD(stream) {
+    stopVAD();
+    vadContext  = new (window.AudioContext || window.webkitAudioContext)();
+    vadAnalyser = vadContext.createAnalyser();
+    vadAnalyser.fftSize = 512;
+    vadSource   = vadContext.createMediaStreamSource(stream);
+    vadSource.connect(vadAnalyser);
+    const buf = new Uint8Array(vadAnalyser.fftSize);
+
+    function tick() {
+      if (liveMode || !isRecording) return;
+      vadAnalyser.getByteTimeDomainData(buf);
+      let sumSq = 0;
+      for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sumSq += v * v; }
+      const rms = Math.sqrt(sumSq / buf.length);
+
+      if (rms > MANUAL_VAD_THRESHOLD) {
+        if (!vadSpeaking) { vadSpeaking = true; speechStartTime = Date.now(); setVoiceIndicator("🔴 Recording…"); }
+        if (vadTimer) { clearTimeout(vadTimer); vadTimer = null; }
+      } else {
+        if (vadSpeaking && !vadTimer) {
+          vadTimer = setTimeout(() => {
+            const dur = Date.now() - speechStartTime;
+            if (dur >= MANUAL_VAD_MIN_SPEECH) stopRecording(false);
+            else { vadSpeaking = false; vadTimer = null; setVoiceIndicator("🔴 Recording — click to stop"); }
+          }, MANUAL_VAD_SILENCE_MS);
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ── Manual recording ──────────────────────────────────────────────────────
+  async function startRecording() {
+    if (liveMode) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks  = [];
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+        .find(t => MediaRecorder.isTypeSupported(t)) || "";
+      mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+      mediaRecorder.onstop = async () => { stream.getTracks().forEach(t => t.stop()); stopVAD(); await transcribeAudio(mimeType); };
+      mediaRecorder.start();
+      isRecording = true;
+      updateMicBtn(true);
+      setVoiceIndicator("🔴 Recording — click to stop");
+      startVAD(stream);
+    } catch {
+      setVoiceIndicator("Microphone access denied.");
+    }
+  }
+
+  function stopRecording(silent = false) {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.stop();
+      isRecording = false;
+      vadSpeaking = false;
+      updateMicBtn(false);
+      if (!silent) setVoiceIndicator("Processing…");
+    }
+  }
+
+  async function transcribeAudio(mimeType) {
+    const myTurn = currentTurnId;
+    const ext    = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
+    const blob   = new Blob(audioChunks, { type: mimeType || "audio/webm" });
+    if (blob.size < 1000) { setVoiceIndicator("Could not understand audio."); return; }
+
+    const formData = new FormData();
+    formData.append("audio", blob, `recording.${ext}`);
+    try {
+      const res  = await fetch("/transcribe", { method: "POST", body: formData });
+      if (currentTurnId !== myTurn) return;
+      const data = await res.json();
+      if (data.text) { setVoiceIndicator(""); await sendMessage(data.text); }
+      else             setVoiceIndicator("Could not understand audio.");
+    } catch {
+      setVoiceIndicator("Transcription error.");
+    }
+  }
+
+  // ── Keyboard ──────────────────────────────────────────────────────────────
   document.getElementById("question").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      // If recording, stop and send via voice
       if (isRecording) { stopRecording(); return; }
       sendMessage();
     }
   });
 
-  initSession();
+  init();
 </script>
 
 </body>

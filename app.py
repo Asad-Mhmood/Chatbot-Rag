@@ -1,18 +1,18 @@
-
 """
 RAG Chatbot — FastAPI Backend
 ==============================
 Groq (LLM) + Cohere (embeddings) + ChromaDB (vector store)
 
-Run with: uv run uvicorn app:app --reload
+Run with: python -m uvicorn app:app --reload
 """
 
 import os
+import re
 import uuid
 import httpx
 import tempfile
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -25,33 +25,28 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import chromadb
 
 load_dotenv()
 
-CHROMA_DIR = "chroma_db"
+CHROMA_DIR  = "chroma_db"
+DEFAULT_KB  = "default"
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# ── Embeddings (Cohere API) ───────────────────────────────────────────────────
+# ── Embeddings ────────────────────────────────────────────────────────────────
 
 embeddings = CohereEmbeddings(
     model="embed-english-light-v3.0",
     cohere_api_key=os.getenv("COHERE_API_KEY"),
 )
 
-# ── Vector store ──────────────────────────────────────────────────────────────
+# ── Shared ChromaDB client (all KBs live here) ────────────────────────────────
 
-vectorstore = Chroma(
-    persist_directory=CHROMA_DIR,
-    embedding_function=embeddings,
-)
-retriever = vectorstore.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 4},
-)
+chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 
-# ── LLM (Groq) ────────────────────────────────────────────────────────────────
+# ── LLM ───────────────────────────────────────────────────────────────────────
 
 llm = ChatGroq(
     model=os.getenv("LLM_MODEL", "llama-3.1-8b-instant"),
@@ -76,12 +71,43 @@ Context:
 
 sessions: dict[str, list] = {}
 
-
 def get_history(session_id: str) -> list:
     if session_id not in sessions:
         sessions[session_id] = []
     return sessions[session_id]
 
+# ── KB helpers ────────────────────────────────────────────────────────────────
+
+def kb_collection_name(kb_id: str) -> str:
+    """ChromaDB collection names must be slug-like."""
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "_", kb_id).strip("_")
+    return slug or "default"
+
+def get_vectorstore(kb_id: str) -> Chroma:
+    return Chroma(
+        client=chroma_client,
+        collection_name=kb_collection_name(kb_id),
+        embedding_function=embeddings,
+    )
+
+def list_kb_ids() -> list[str]:
+    """Return all existing collection names as KB ids."""
+    cols = chroma_client.list_collections()
+    names = [c.name for c in cols]
+    # Always ensure default exists in the list
+    if DEFAULT_KB not in names:
+        names = [DEFAULT_KB] + names
+    return names
+
+# ── In-memory doc tracker per KB ──────────────────────────────────────────────
+
+kb_docs: dict[str, list[str]] = {}
+
+def track_doc(kb_id: str, filename: str):
+    if kb_id not in kb_docs:
+        kb_docs[kb_id] = []
+    if filename not in kb_docs[kb_id]:
+        kb_docs[kb_id].append(filename)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -89,15 +115,38 @@ def get_history(session_id: str) -> list:
 async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
+# ── Knowledge base endpoints ──────────────────────────────────────────────────
+
+@app.get("/knowledge-bases")
+async def get_knowledge_bases():
+    return JSONResponse({"knowledge_bases": list_kb_ids()})
+
+
+class CreateKBRequest(BaseModel):
+    name: str
+
+@app.post("/knowledge-bases")
+async def create_knowledge_base(body: CreateKBRequest):
+    name = body.name.strip()
+    if not name:
+        return JSONResponse({"error": "Name cannot be empty."}, status_code=400)
+    col_name = kb_collection_name(name)
+    # Touch the collection to create it
+    chroma_client.get_or_create_collection(col_name)
+    return JSONResponse({"kb_id": col_name, "name": col_name})
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     session_id: str
     question: str
-
+    kb_id: str = DEFAULT_KB
 
 @app.post("/chat")
 async def chat(body: ChatRequest):
     history = get_history(body.session_id)
+    vs = get_vectorstore(body.kb_id)
+    retriever = vs.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
     docs = retriever.invoke(body.question)
     context = "\n\n".join(doc.page_content for doc in docs)
@@ -121,25 +170,23 @@ async def chat(body: ChatRequest):
 
     return JSONResponse({"answer": answer, "sources": sources})
 
+# ── Session ───────────────────────────────────────────────────────────────────
 
 @app.post("/session/new")
 async def new_session():
     return {"session_id": str(uuid.uuid4())}
 
-
-# ── Uploaded docs tracker ─────────────────────────────────────────────────────
-
-uploaded_docs: list[str] = []
-
+# ── Documents ─────────────────────────────────────────────────────────────────
 
 @app.get("/documents")
-async def list_documents():
-    return JSONResponse({"documents": uploaded_docs})
-
+async def list_documents(kb_id: str = DEFAULT_KB):
+    return JSONResponse({"documents": kb_docs.get(kb_id, [])})
 
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Accept a PDF or TXT file, chunk it, embed it, add to vectorstore."""
+async def upload_document(
+    file: UploadFile = File(...),
+    kb_id: str = Form(DEFAULT_KB),
+):
     filename = file.filename or "uploaded_file"
     ext = os.path.splitext(filename)[1].lower()
 
@@ -148,44 +195,39 @@ async def upload_document(file: UploadFile = File(...)):
 
     contents = await file.read()
 
-    # Write to a temp file so loaders can read it
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
     try:
-        if ext == ".pdf":
-            loader = PyPDFLoader(tmp_path)
-        else:
-            loader = TextLoader(tmp_path, encoding="utf-8")
-
+        loader = PyPDFLoader(tmp_path) if ext == ".pdf" else TextLoader(tmp_path, encoding="utf-8")
         documents = loader.load()
 
-        # Tag with the original filename for source display
         for doc in documents:
             doc.metadata["source"] = filename
+            doc.metadata["kb_id"]  = kb_id
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
         chunks = splitter.split_documents(documents)
 
-        vectorstore.add_documents(chunks)
-
-        if filename not in uploaded_docs:
-            uploaded_docs.append(filename)
+        vs = get_vectorstore(kb_id)
+        vs.add_documents(chunks)
+        track_doc(kb_id, filename)
 
     finally:
         os.unlink(tmp_path)
 
     return JSONResponse({
-        "message": f"'{filename}' uploaded and indexed successfully.",
+        "message": f"'{filename}' uploaded to '{kb_id}' successfully.",
         "chunks": len(chunks),
         "filename": filename,
+        "kb_id": kb_id,
     })
 
+# ── Transcribe ────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
-    """Transcribe audio using Groq Whisper API."""
     audio_bytes = await audio.read()
 
     async with httpx.AsyncClient(timeout=30) as client:
