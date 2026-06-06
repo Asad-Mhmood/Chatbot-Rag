@@ -154,6 +154,34 @@
       animation: pulse 1s infinite;
     }
 
+    #live-btn {
+      background: transparent;
+      color: #1a1a2e;
+      border: 2px solid #1a1a2e;
+      border-radius: 24px;
+      padding: 10px 18px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #live-btn:hover  { background: #1a1a2e; color: white; }
+    #live-btn.active {
+      background: #2e7d32;
+      border-color: #2e7d32;
+      color: white;
+      animation: pulse-green 1.5s infinite;
+    }
+
+    @keyframes pulse-green {
+      0%   { box-shadow: 0 0 0 0 rgba(46,125,50,0.5); }
+      70%  { box-shadow: 0 0 0 8px rgba(46,125,50,0); }
+      100% { box-shadow: 0 0 0 0 rgba(46,125,50,0); }
+    }
+
     @keyframes pulse {
       0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(192,57,43,0.5); }
       70%  { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(192,57,43,0); }
@@ -179,6 +207,64 @@
 
     #welcome h2 { font-size: 1.4rem; color: #555; margin-bottom: 8px; }
     #welcome p  { font-size: 0.9rem; }
+
+    /* ── Upload panel ───────────────────────────────────────────────────── */
+    #upload-panel {
+      background: white;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 10px 24px;
+    }
+
+    #upload-inner {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #upload-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #f5f5f5;
+      border: 1.5px dashed #bbb;
+      border-radius: 20px;
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      color: #555;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    #upload-label:hover { border-color: #1a1a2e; background: #eef; color: #1a1a2e; }
+    #upload-file { display: none; }
+
+    #upload-status {
+      font-size: 0.82rem;
+      color: #888;
+      flex: 1;
+    }
+
+    #upload-status.success { color: #2e7d32; }
+    #upload-status.error   { color: #c0392b; }
+
+    #doc-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      width: 100%;
+      margin-top: 2px;
+    }
+
+    .doc-tag {
+      background: #e8f5e9;
+      color: #2e7d32;
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
@@ -190,6 +276,17 @@
   </div>
 </header>
 
+<div id="upload-panel">
+  <div id="upload-inner">
+    <label id="upload-label" for="upload-file">
+      📎 Upload Document
+    </label>
+    <input id="upload-file" type="file" accept=".pdf,.txt" onchange="uploadDocument(this)"/>
+    <span id="upload-status">PDF or TXT — uploaded docs are indexed instantly</span>
+    <div id="doc-list"></div>
+  </div>
+</div>
+
 <div id="chat-container">
   <div id="welcome">
     <h2>Hello! How can I help?</h2>
@@ -200,7 +297,8 @@
 <div id="input-area">
   <div id="voice-status"></div>
   <div id="input-row">
-    <button id="mic-btn" onclick="toggleRecording()" title="Hold to record voice">🎤</button>
+    <button id="live-btn" onclick="toggleLiveMode()" title="Live conversation mode">🔁 Live</button>
+    <button id="mic-btn" onclick="toggleRecording()" title="Click to record voice">🎤</button>
     <input
       id="question"
       type="text"
@@ -212,16 +310,68 @@
 </div>
 
 <script>
-  let sessionId = null;
+  let sessionId   = null;
   let mediaRecorder = null;
-  let audioChunks = [];
-  let isRecording = false;
+  let audioChunks   = [];
+  let isRecording   = false;
+  let liveMode      = false;   // continuous conversation mode
 
   // ── Session ──────────────────────────────────────────────────────────────
   async function initSession() {
     const res = await fetch("/session/new", { method: "POST" });
     const data = await res.json();
     sessionId = data.session_id;
+    await loadDocuments();
+  }
+
+  // ── Document upload ──────────────────────────────────────────────────────
+  async function loadDocuments() {
+    const res = await fetch("/documents");
+    const data = await res.json();
+    renderDocTags(data.documents);
+  }
+
+  function renderDocTags(docs) {
+    const list = document.getElementById("doc-list");
+    list.innerHTML = docs.map(d => `<span class="doc-tag">✅ ${d}</span>`).join("");
+  }
+
+  async function uploadDocument(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const status = document.getElementById("upload-status");
+    const label  = document.getElementById("upload-label");
+
+    status.textContent = `Uploading "${file.name}"…`;
+    status.className = "";
+    label.style.pointerEvents = "none";
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res  = await fetch("/upload", { method: "POST", body: formData });
+      const data = await res.json();
+
+      if (res.ok) {
+        status.textContent = `✔ "${file.name}" indexed (${data.chunks} chunks)`;
+        status.className = "success";
+        await loadDocuments();
+        const welcome = document.getElementById("welcome");
+        if (welcome) welcome.remove();
+        appendMessage("bot", `"${file.name}" has been uploaded and indexed. You can now ask questions about it.`);
+      } else {
+        status.textContent = `✖ ${data.error}`;
+        status.className = "error";
+      }
+    } catch (err) {
+      status.textContent = "Upload failed. Please try again.";
+      status.className = "error";
+    }
+
+    label.style.pointerEvents = "";
+    input.value = "";
   }
 
   // ── UI helpers ───────────────────────────────────────────────────────────
@@ -234,7 +384,6 @@
     if (welcome) welcome.remove();
 
     const container = document.getElementById("chat-container");
-
     const msg = document.createElement("div");
     msg.className = `message ${role}`;
 
@@ -256,24 +405,33 @@
   }
 
   // ── Text-to-speech ───────────────────────────────────────────────────────
-  function speak(text) {
-    if (!window.speechSynthesis) return;
+  function speak(text, onDone) {
+    if (!window.speechSynthesis) { onDone && onDone(); return; }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 1.0;
+    utt.rate  = 1.0;
     utt.pitch = 1.0;
+    utt.onend = () => { onDone && onDone(); };
+    // fallback: if onend doesn't fire (some browsers), estimate duration
+    const fallbackMs = Math.max(3000, text.length * 55);
+    const fallback = setTimeout(() => { onDone && onDone(); }, fallbackMs);
+    utt.onend = () => { clearTimeout(fallback); onDone && onDone(); };
     window.speechSynthesis.speak(utt);
+  }
+
+  function stopSpeaking() {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
   // ── Chat ─────────────────────────────────────────────────────────────────
   async function sendMessage(questionOverride) {
-    const input = document.getElementById("question");
-    const btn   = document.getElementById("send-btn");
+    const input  = document.getElementById("question");
+    const btn    = document.getElementById("send-btn");
     const micBtn = document.getElementById("mic-btn");
     const question = (questionOverride || input.value).trim();
     if (!question || !sessionId) return;
 
-    input.value = "";
+    input.value  = "";
     btn.disabled = true;
     micBtn.disabled = true;
 
@@ -281,7 +439,7 @@
     const typing = appendMessage("bot typing", "Thinking...");
 
     try {
-      const res = await fetch("/chat", {
+      const res  = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, question }),
@@ -290,40 +448,70 @@
 
       typing.remove();
       appendMessage("bot", data.answer, data.sources);
-      speak(data.answer);
+
+      if (liveMode) {
+        // Speak answer, then auto-start recording for next turn
+        setVoiceStatus("🔊 Speaking…");
+        speak(data.answer, () => {
+          if (liveMode) {
+            setVoiceStatus("");
+            startRecording();   // next turn
+          }
+        });
+      } else {
+        speak(data.answer);
+      }
+
     } catch (err) {
       typing.remove();
       appendMessage("bot", "Sorry, something went wrong. Please try again.");
+      if (liveMode) startRecording();
     }
 
-    btn.disabled = false;
+    btn.disabled    = false;
     micBtn.disabled = false;
-    input.focus();
+    if (!liveMode) input.focus();
+  }
+
+  // ── Live mode ─────────────────────────────────────────────────────────────
+  function toggleLiveMode() {
+    liveMode = !liveMode;
+    const btn = document.getElementById("live-btn");
+
+    if (liveMode) {
+      btn.classList.add("active");
+      btn.textContent = "⏹ Stop Live";
+      setVoiceStatus("🟢 Live mode on — listening…");
+      startRecording();
+    } else {
+      btn.classList.remove("active");
+      btn.textContent = "🔁 Live";
+      stopSpeaking();
+      if (isRecording) stopRecording(/* silent */ true);
+      setVoiceStatus("");
+    }
   }
 
   // ── Voice recording ──────────────────────────────────────────────────────
   async function toggleRecording() {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      await startRecording();
-    }
+    if (isRecording) stopRecording();
+    else              await startRecording();
   }
 
   async function startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunks = [];
+      // Stop any ongoing TTS the moment mic opens
+      stopSpeaking();
 
-      // Pick a supported MIME type
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks  = [];
+
       const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
         .find(t => MediaRecorder.isTypeSupported(t)) || "";
 
       mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
 
-      mediaRecorder.ondataavailable = e => {
-        if (e.data.size > 0) audioChunks.push(e.data);
-      };
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
@@ -336,14 +524,18 @@
       const micBtn = document.getElementById("mic-btn");
       micBtn.classList.add("recording");
       micBtn.textContent = "⏹";
-      setVoiceStatus("🔴 Recording… click ⏹ to stop");
+      if (!liveMode) setVoiceStatus("🔴 Recording… click ⏹ to stop");
+      else           setVoiceStatus("🔴 Listening… click mic to send");
+
     } catch (err) {
       setVoiceStatus("Microphone access denied.");
       console.error(err);
+      if (liveMode) toggleLiveMode(); // exit live mode if mic fails
     }
   }
 
-  function stopRecording() {
+  // silent=true means don't reset live mode status
+  function stopRecording(silent = false) {
     if (mediaRecorder && isRecording) {
       mediaRecorder.stop();
       isRecording = false;
@@ -351,18 +543,26 @@
       const micBtn = document.getElementById("mic-btn");
       micBtn.classList.remove("recording");
       micBtn.textContent = "🎤";
-      setVoiceStatus("Processing…");
+      if (!silent) setVoiceStatus("Processing…");
     }
   }
 
   async function transcribeAudio(mimeType) {
     const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
     const blob = new Blob(audioChunks, { type: mimeType || "audio/webm" });
+
+    // If blob is too small it's silence — skip in live mode
+    if (liveMode && blob.size < 1000) {
+      setVoiceStatus("🟢 Live mode on — listening…");
+      startRecording();
+      return;
+    }
+
     const formData = new FormData();
     formData.append("audio", blob, `recording.${ext}`);
 
     try {
-      const res = await fetch("/transcribe", { method: "POST", body: formData });
+      const res  = await fetch("/transcribe", { method: "POST", body: formData });
       const data = await res.json();
 
       if (data.text) {
@@ -370,10 +570,12 @@
         document.getElementById("question").value = data.text;
         await sendMessage(data.text);
       } else {
-        setVoiceStatus("Could not understand audio. Please try again.");
+        setVoiceStatus(liveMode ? "🟢 Didn't catch that — listening…" : "Could not understand audio. Try again.");
+        if (liveMode) startRecording();
       }
     } catch (err) {
-      setVoiceStatus("Transcription error. Please try again.");
+      setVoiceStatus("Transcription error.");
+      if (liveMode) startRecording();
       console.error(err);
     }
   }
@@ -382,6 +584,8 @@
   document.getElementById("question").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      // If recording, stop and send via voice
+      if (isRecording) { stopRecording(); return; }
       sendMessage();
     }
   });

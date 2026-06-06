@@ -10,6 +10,7 @@ Run with: uv run uvicorn app:app --reload
 import os
 import uuid
 import httpx
+import tempfile
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -22,6 +23,8 @@ from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
@@ -122,6 +125,62 @@ async def chat(body: ChatRequest):
 @app.post("/session/new")
 async def new_session():
     return {"session_id": str(uuid.uuid4())}
+
+
+# ── Uploaded docs tracker ─────────────────────────────────────────────────────
+
+uploaded_docs: list[str] = []
+
+
+@app.get("/documents")
+async def list_documents():
+    return JSONResponse({"documents": uploaded_docs})
+
+
+@app.post("/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Accept a PDF or TXT file, chunk it, embed it, add to vectorstore."""
+    filename = file.filename or "uploaded_file"
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext not in (".pdf", ".txt"):
+        return JSONResponse({"error": "Only PDF and TXT files are supported."}, status_code=400)
+
+    contents = await file.read()
+
+    # Write to a temp file so loaders can read it
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        if ext == ".pdf":
+            loader = PyPDFLoader(tmp_path)
+        else:
+            loader = TextLoader(tmp_path, encoding="utf-8")
+
+        documents = loader.load()
+
+        # Tag with the original filename for source display
+        for doc in documents:
+            doc.metadata["source"] = filename
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        chunks = splitter.split_documents(documents)
+
+        vectorstore.add_documents(chunks)
+
+        if filename not in uploaded_docs:
+            uploaded_docs.append(filename)
+
+    finally:
+        os.unlink(tmp_path)
+
+    return JSONResponse({
+        "message": f"'{filename}' uploaded and indexed successfully.",
+        "chunks": len(chunks),
+        "filename": filename,
+    })
 
 
 @app.post("/transcribe")
