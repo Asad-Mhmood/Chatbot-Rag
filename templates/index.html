@@ -573,6 +573,14 @@
     #send-btn:hover { background: var(--accent-hover); color: white; }
     #send-btn:disabled { background: var(--text-faint); cursor: not-allowed; }
 
+    /* Interrupt button state — shown while bot is answering */
+    #send-btn.interrupting {
+      background: var(--danger);
+      color: white;
+      animation: pulse-red 1s infinite;
+    }
+    #send-btn.interrupting:hover { background: #c94444; }
+
     /* Animations */
     @keyframes pulse-red {
       0%   { box-shadow: 0 0 0 0 rgba(224,82,82,0.4); }
@@ -1004,15 +1012,34 @@
     return msg;
   }
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
-  function speak(text, onDone) {
+  // ── TTS ───────────────────────────────────────────────────────────────────────────
+  // Chrome's speechSynthesis.onend is unreliable — use a tight word-rate
+  // estimate as the primary timer, with onend as early exit if it fires.
+  function ttsSpeak(text, onDone) {
     if (!window.speechSynthesis) { onDone && onDone(); return; }
     window.speechSynthesis.cancel();
+
+    // Estimate duration: ~150 words/min at rate 1.0 → ~2.5 chars/100ms
+    const words      = text.trim().split(/\s+/).length;
+    const estimatedMs = Math.max(1500, (words / 150) * 60 * 1000);
+
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate  = 1.0;
     utt.pitch = 1.0;
-    const fallback = setTimeout(() => { onDone && onDone(); }, Math.max(3000, text.length * 55));
-    utt.onend = () => { clearTimeout(fallback); onDone && onDone(); };
+
+    let fired = false;
+    function done() {
+      if (fired) return;
+      fired = true;
+      clearTimeout(fallback);
+      onDone && onDone();
+    }
+
+    // Primary: tight estimate (fires reliably)
+    const fallback = setTimeout(done, estimatedMs + 300);
+    // Secondary: onend fires early when browser supports it correctly
+    utt.onend = done;
+
     window.speechSynthesis.speak(utt);
   }
 
@@ -1020,7 +1047,7 @@
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
-  // ── Interrupt / turn control ──────────────────────────────────────────────
+  // ── Interrupt / turn control ────────────────────────────────────────────
   let currentTurnId   = 0;
   let preAnswerTimer  = null;
   let activeFetchCtrl = null;
@@ -1032,32 +1059,74 @@
     stopSpeaking();
   }
 
-  // ── Chat ──────────────────────────────────────────────────────────────────
-  async function sendMessage(questionOverride) {
-    const input   = document.getElementById("question");
-    const sendBtn = document.getElementById("send-btn");
-    const micBtn  = document.getElementById("mic-btn");
-    const question = (questionOverride || input.value).trim();
-    if (!question || !sessionId) return;
+  // ── Chat ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+  let isBotResponding = false;   // true while fetch/TTS is in progress
+
+  function setBotResponding(state) {
+    isBotResponding = state;
+    const sendBtn = document.getElementById("send-btn");
+    if (state) {
+      sendBtn.classList.add("interrupting");
+      sendBtn.title = "Click to interrupt";
+      sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`;
+    } else {
+      sendBtn.classList.remove("interrupting");
+      sendBtn.title = "Send";
+      sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+    }
+  }
+
+  async function sendMessage(questionOverride) {
+    const input    = document.getElementById("question");
+    const question = (questionOverride || input.value).trim();
+    if (!sessionId) return;
+
+    // Pure interrupt: bot responding, nothing typed
+    if (isBotResponding && !question) {
+      interruptCurrentTurn();
+      setBotResponding(false);
+      return;
+    }
+
+    if (!question) return;
+
+    // Cancel any running turn first
     interruptCurrentTurn();
     const myTurn = currentTurnId;
 
-    input.value      = "";
-    sendBtn.disabled = true;
-    micBtn.disabled  = true;
-
+    input.value = "";
+    setBotResponding(true);
     appendMessage("user", question);
 
-    // 2.5 s pause before answering (cancellable)
+    // Brief pause in live mode (cancellable)
     if (liveMode) {
       setVoiceIndicator("⏳ Processing…");
-      await new Promise(resolve => { preAnswerTimer = setTimeout(resolve, 2500); });
+      await new Promise(resolve => { preAnswerTimer = setTimeout(resolve, 800); });
       preAnswerTimer = null;
-      if (currentTurnId !== myTurn) { sendBtn.disabled = false; micBtn.disabled = false; return; }
+      if (currentTurnId !== myTurn) { setBotResponding(false); return; }
     }
 
-    const typing = appendMessage("bot typing", "");
+    // Create bot bubble — filled token by token from the stream
+    const welcome = document.getElementById("welcome");
+    if (welcome) welcome.remove();
+    const container = document.getElementById("chat-container");
+
+    const msgEl    = document.createElement("div");
+    msgEl.className = "message bot";
+    const metaEl   = document.createElement("div");
+    metaEl.className = "msg-meta";
+    metaEl.textContent = `DocMind · ${timestamp()}`;
+    const bubbleEl = document.createElement("div");
+    bubbleEl.className = "bubble";
+    bubbleEl.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
+    msgEl.appendChild(metaEl);
+    msgEl.appendChild(bubbleEl);
+    container.appendChild(msgEl);
+    container.scrollTop = container.scrollHeight;
+
+    let fullAnswer  = "";
+    let dotsCleaned = false;
 
     try {
       activeFetchCtrl = new AbortController();
@@ -1068,60 +1137,114 @@
         signal: activeFetchCtrl.signal,
       });
       activeFetchCtrl = null;
-      if (currentTurnId !== myTurn) { typing.remove(); sendBtn.disabled = false; micBtn.disabled = false; return; }
 
-      const data = await res.json();
-      typing.remove();
-      appendMessage("bot", data.answer, data.sources);
+      if (currentTurnId !== myTurn) { msgEl.remove(); setBotResponding(false); return; }
 
-      if (liveMode && currentTurnId === myTurn) {
-        setVoiceIndicator("🔊 Speaking…");
-        speak(data.answer, () => {
-          if (liveMode && currentTurnId === myTurn) {
-            livePipelineState = "listening";
-            setVoiceIndicator("🟢 Listening…");
+      // Read the streaming response token by token
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let   sources = [];
+
+      while (true) {
+        if (currentTurnId !== myTurn) { reader.cancel(); break; }
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const lines = decoder.decode(value, { stream: true }).split("\n");
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let parsed;
+          try { parsed = JSON.parse(line); } catch { continue; }
+
+          if (parsed.token !== undefined) {
+            if (!dotsCleaned) { bubbleEl.textContent = ""; dotsCleaned = true; }
+            fullAnswer += parsed.token;
+            bubbleEl.textContent = fullAnswer;
+            container.scrollTop  = container.scrollHeight;
           }
-        });
-      } else if (!liveMode) {
-        speak(data.answer);
+          if (parsed.done) { sources = parsed.sources || []; }
+        }
       }
+
+      // If interrupted mid-stream, remove the partial bubble
+      if (currentTurnId !== myTurn) {
+        msgEl.remove();
+        setBotResponding(false);
+        return;
+      }
+
+      // Attach sources
+      if (sources.length > 0) {
+        const srcEl = document.createElement("div");
+        srcEl.className = "sources";
+        srcEl.innerHTML = sources.map(s => `<span>📎 ${s}</span>`).join("");
+        msgEl.appendChild(srcEl);
+      }
+
+      // TTS — speak the answer, allow interrupt during playback
+      if (liveMode && currentTurnId === myTurn) {
+        livePipelineState = "speaking";
+        setVoiceIndicator("🔊 Speaking…");
+        ttsSpeak(fullAnswer, () => {
+          if (!liveMode || currentTurnId !== myTurn) return;
+          livePipelineState = "cooldown";
+          setVoiceIndicator("🟢 Listening…");
+          setTimeout(() => {
+            if (!liveMode || currentTurnId !== myTurn) return;
+            livePipelineState = "listening";
+          }, 900);
+        });
+      } else if (!liveMode && fullAnswer) {
+        ttsSpeak(fullAnswer, () => {
+          if (currentTurnId === myTurn) setBotResponding(false);
+        });
+        return;  // setBotResponding called via TTS callback
+      }
+
     } catch (err) {
-      if (err.name === "AbortError") { sendBtn.disabled = false; micBtn.disabled = false; return; }
-      typing.remove();
+      if (err.name === "AbortError") { setBotResponding(false); return; }
+      msgEl.remove();
       appendMessage("bot", "Something went wrong. Please try again.");
+      if (liveMode && currentTurnId === myTurn) {
+        livePipelineState = "listening";
+        setVoiceIndicator("🟢 Listening…");
+      }
     }
 
-    sendBtn.disabled = false;
-    micBtn.disabled  = false;
+    setBotResponding(false);
     if (!liveMode) input.focus();
   }
 
-  // ── Live mode ─────────────────────────────────────────────────────────────
-  // One persistent mic stream stays open the ENTIRE time live mode is active.
-  // VAD runs on it continuously — even during TTS and processing.
-  // A separate MediaRecorder captures only when the user is speaking.
+  // ── Live pipeline ───────────────────────────────────────────────────────────────────────────────────
+  // States: idle | listening | recording | processing | speaking | cooldown
+  //
+  // "speaking"  - bot TTS playing. VAD MUTED. Mic picks up speaker bleed.
+  // "cooldown"  - TTS just ended. VAD still MUTED for 600ms to flush bleed.
+  // "listening" - VAD active, waiting for user to start speaking.
+  // "recording" - User is speaking, MediaRecorder capturing.
+  // "processing"- Audio sent to transcribe/LLM. VAD MUTED to prevent re-trigger.
 
-  let liveStream      = null;   // persistent mic stream (open whole live session)
-  let liveAudioCtx    = null;
-  let liveAnalyser    = null;
-  let liveSource      = null;
-  let liveRecorder    = null;   // MediaRecorder for current speech segment
-  let liveChunks      = [];
-  let liveMimeType    = "";
-  let livePipelineState = "idle"; // "idle" | "listening" | "recording" | "processing"
-  let vadSilenceTimer = null;
-  let vadSpeakStart   = 0;
-  let vadActive       = false;
+  let liveStream        = null;
+  let liveAudioCtx      = null;
+  let liveAnalyser      = null;
+  let liveSource        = null;
+  let liveRecorder      = null;
+  let liveChunks        = [];
+  let liveMimeType      = "";
+  let livePipelineState = "idle";
+  let vadSilenceTimer   = null;
+  let vadSpeakStart     = 0;
+  let vadActive         = false;
 
-  const VAD_THRESHOLD     = 14;    // RMS 0-255
-  const VAD_SILENCE_MS    = 1300;  // silence after speech → auto-stop
-  const VAD_MIN_SPEECH_MS = 350;   // min speech duration to accept
+  const VAD_THRESHOLD     = 14;
+  const VAD_SILENCE_MS    = 1300;
+  const VAD_MIN_SPEECH_MS = 350;
 
   function toggleLiveMode() {
     liveMode = !liveMode;
     const btn   = document.getElementById("live-btn");
     const label = document.getElementById("live-label");
-
     if (liveMode) {
       btn.classList.add("active");
       label.textContent = "Stop Live";
@@ -1135,7 +1258,13 @@
 
   async function startLivePipeline() {
     try {
-      liveStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      liveStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+        }
+      });
     } catch {
       setVoiceIndicator("Microphone access denied.");
       liveMode = false;
@@ -1147,16 +1276,15 @@
     liveMimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
       .find(t => MediaRecorder.isTypeSupported(t)) || "";
 
-    // Set up VAD on the persistent stream
     liveAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     liveAnalyser = liveAudioCtx.createAnalyser();
     liveAnalyser.fftSize = 512;
     liveSource   = liveAudioCtx.createMediaStreamSource(liveStream);
     liveSource.connect(liveAnalyser);
 
-    vadActive           = true;
-    livePipelineState   = "listening";
-    setVoiceIndicator("🟢 Listening…");
+    vadActive         = true;
+    livePipelineState = "listening";
+    setVoiceIndicator("\ud83d\udfe2 Listening\u2026");
     updateMicBtn(false);
 
     const buf = new Uint8Array(liveAnalyser.fftSize);
@@ -1169,23 +1297,28 @@
       for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sumSq += v * v; }
       const rms = Math.sqrt(sumSq / buf.length);
 
+      // MUTED states: post-TTS cooldown only
+      // During "speaking" or "processing", loud voice = user interrupt
+      if (livePipelineState === "cooldown") {
+        requestAnimationFrame(vadTick);
+        return;
+      }
+
       if (rms > VAD_THRESHOLD) {
-        // ── Voice detected ──────────────────────────────────────────────
-        if (livePipelineState === "listening") {
-          // Start capturing
-          livePipelineState = "recording";
-          vadSpeakStart     = Date.now();
-          liveChunks        = [];
-          liveRecorder      = new MediaRecorder(liveStream, liveMimeType ? { mimeType: liveMimeType } : {});
-          liveRecorder.ondataavailable = e => { if (e.data.size > 0) liveChunks.push(e.data); };
-          liveRecorder.start();
-          updateMicBtn(true);
-          setVoiceIndicator("🔴 Listening…");
-        }
-
-        if (livePipelineState === "processing" || livePipelineState === "speaking") {
-          // User interrupted — stop TTS + cancel current turn
+        // If bot is speaking or processing, loud user voice = interrupt
+        if (livePipelineState === "speaking" || livePipelineState === "processing") {
           interruptCurrentTurn();
+          setBotResponding(false);
+          livePipelineState = "listening";
+          setVoiceIndicator("\ud83d\udfe2 Listening\u2026");
+          // small cooldown to avoid immediately re-capturing the same noise
+          livePipelineState = "cooldown";
+          setTimeout(() => { if (vadActive) { livePipelineState = "listening"; } }, 400);
+          requestAnimationFrame(vadTick);
+          return;
+        }
+        if (livePipelineState === "listening") {
+          // User started speaking — begin capture
           livePipelineState = "recording";
           vadSpeakStart     = Date.now();
           liveChunks        = [];
@@ -1193,14 +1326,10 @@
           liveRecorder.ondataavailable = e => { if (e.data.size > 0) liveChunks.push(e.data); };
           liveRecorder.start();
           updateMicBtn(true);
-          setVoiceIndicator("🔴 Listening…");
+          setVoiceIndicator("\ud83d\udd34 Listening\u2026");
         }
-
-        // Reset silence timer on every voiced frame
         if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
-
       } else {
-        // ── Silence ─────────────────────────────────────────────────────
         if (livePipelineState === "recording" && !vadSilenceTimer) {
           vadSilenceTimer = setTimeout(() => {
             vadSilenceTimer = null;
@@ -1209,10 +1338,9 @@
               liveRecorder.onstop = async () => {
                 if (!liveMode) return;
                 if (duration < VAD_MIN_SPEECH_MS) {
-                  // Too short — noise, go back to listening
                   livePipelineState = "listening";
                   updateMicBtn(false);
-                  setVoiceIndicator("🟢 Listening…");
+                  setVoiceIndicator("\ud83d\udfe2 Listening\u2026");
                   return;
                 }
                 livePipelineState = "processing";
@@ -1231,31 +1359,17 @@
     requestAnimationFrame(vadTick);
   }
 
-  // Track when bot is speaking so VAD knows the state
-  const _origSpeak = speak;
-  function speak(text, onDone) {
-    if (liveMode) livePipelineState = "speaking";
-    _origSpeak(text, onDone);
-  }
-
   function stopLivePipeline() {
     vadActive = false;
     interruptCurrentTurn();
-
+    setBotResponding(false);
     if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
-
-    if (liveRecorder && liveRecorder.state === "recording") {
-      liveRecorder.onstop = null;
-      liveRecorder.stop();
-    }
+    if (liveRecorder && liveRecorder.state === "recording") { liveRecorder.onstop = null; liveRecorder.stop(); }
     liveRecorder = null;
-
     if (liveSource)   { try { liveSource.disconnect();   } catch {} liveSource   = null; }
     if (liveAnalyser) { try { liveAnalyser.disconnect(); } catch {} liveAnalyser = null; }
     if (liveAudioCtx && liveAudioCtx.state !== "closed") { liveAudioCtx.close().catch(() => {}); liveAudioCtx = null; }
-
-    if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
-
+    if (liveStream)   { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
     livePipelineState = "idle";
     setVoiceIndicator("");
     updateMicBtn(false);
@@ -1267,14 +1381,11 @@
     const blob   = new Blob(liveChunks, { type: liveMimeType || "audio/webm" });
 
     if (blob.size < 1000) {
-      if (liveMode && currentTurnId === myTurn) {
-        livePipelineState = "listening";
-        setVoiceIndicator("🟢 Listening…");
-      }
+      if (liveMode && currentTurnId === myTurn) { livePipelineState = "listening"; setVoiceIndicator("\ud83d\udfe2 Listening\u2026"); }
       return;
     }
 
-    setVoiceIndicator("⏳ Processing…");
+    setVoiceIndicator("\u23f3 Transcribing\u2026");
     const formData = new FormData();
     formData.append("audio", blob, `recording.${ext}`);
 
@@ -1282,45 +1393,43 @@
       const res  = await fetch("/transcribe", { method: "POST", body: formData });
       if (!liveMode || currentTurnId !== myTurn) return;
       const data = await res.json();
-
       if (data.text) {
         await sendMessage(data.text);
       } else {
         if (!liveMode || currentTurnId !== myTurn) return;
         livePipelineState = "listening";
-        setVoiceIndicator("🟢 Listening…");
+        setVoiceIndicator("\ud83d\udfe2 Listening\u2026");
       }
     } catch {
       if (!liveMode || currentTurnId !== myTurn) return;
       livePipelineState = "listening";
-      setVoiceIndicator("🟢 Listening…");
+      setVoiceIndicator("\ud83d\udfe2 Listening\u2026");
     }
   }
 
   function updateMicBtn(recording) {
     const btn = document.getElementById("mic-btn");
-    if (recording) { btn.classList.add("recording"); btn.textContent = "⏹"; }
-    else           { btn.classList.remove("recording"); btn.textContent = "🎤"; }
+    if (recording) { btn.classList.add("recording"); btn.textContent = "\u23f9"; }
+    else           { btn.classList.remove("recording"); btn.textContent = "\ud83c\udfa4"; }
   }
 
-  // ── Manual voice (mic button) — only used outside live mode ──────────────
+  // ── Manual voice (mic button) ──────────────────────────────────────────────────────────────────────────
   async function toggleRecording() {
-    if (liveMode) return;   // live mode owns the mic
+    if (liveMode) return;
     if (isRecording) stopRecording();
     else             await startRecording();
   }
 
-  // ── VAD state (manual mode only) ─────────────────────────────────────────
-  let vadContext  = null;
-  let vadAnalyser = null;
-  let vadSource   = null;
-  let vadTimer    = null;
-  let vadSpeaking = false;
+  let vadContext      = null;
+  let vadAnalyser     = null;
+  let vadSource       = null;
+  let vadTimer        = null;
+  let vadSpeaking     = false;
   let speechStartTime = 0;
 
-  const MANUAL_VAD_THRESHOLD   = 12;
-  const MANUAL_VAD_SILENCE_MS  = 1400;
-  const MANUAL_VAD_MIN_SPEECH  = 400;
+  const MANUAL_VAD_THRESHOLD  = 12;
+  const MANUAL_VAD_SILENCE_MS = 1400;
+  const MANUAL_VAD_MIN_SPEECH = 400;
 
   function stopVAD() {
     if (vadTimer)    { clearTimeout(vadTimer);  vadTimer    = null; }
@@ -1338,23 +1447,21 @@
     vadSource   = vadContext.createMediaStreamSource(stream);
     vadSource.connect(vadAnalyser);
     const buf = new Uint8Array(vadAnalyser.fftSize);
-
     function tick() {
       if (liveMode || !isRecording) return;
       vadAnalyser.getByteTimeDomainData(buf);
       let sumSq = 0;
       for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sumSq += v * v; }
       const rms = Math.sqrt(sumSq / buf.length);
-
       if (rms > MANUAL_VAD_THRESHOLD) {
-        if (!vadSpeaking) { vadSpeaking = true; speechStartTime = Date.now(); setVoiceIndicator("🔴 Recording…"); }
+        if (!vadSpeaking) { vadSpeaking = true; speechStartTime = Date.now(); setVoiceIndicator("\ud83d\udd34 Recording\u2026"); }
         if (vadTimer) { clearTimeout(vadTimer); vadTimer = null; }
       } else {
         if (vadSpeaking && !vadTimer) {
           vadTimer = setTimeout(() => {
             const dur = Date.now() - speechStartTime;
             if (dur >= MANUAL_VAD_MIN_SPEECH) stopRecording(false);
-            else { vadSpeaking = false; vadTimer = null; setVoiceIndicator("🔴 Recording — click to stop"); }
+            else { vadSpeaking = false; vadTimer = null; setVoiceIndicator("\ud83d\udd34 Recording \u2014 click to stop"); }
           }, MANUAL_VAD_SILENCE_MS);
         }
       }
@@ -1363,7 +1470,6 @@
     requestAnimationFrame(tick);
   }
 
-  // ── Manual recording ──────────────────────────────────────────────────────
   async function startRecording() {
     if (liveMode) return;
     try {
@@ -1377,7 +1483,7 @@
       mediaRecorder.start();
       isRecording = true;
       updateMicBtn(true);
-      setVoiceIndicator("🔴 Recording — click to stop");
+      setVoiceIndicator("\ud83d\udd34 Recording \u2014 click to stop");
       startVAD(stream);
     } catch {
       setVoiceIndicator("Microphone access denied.");
@@ -1390,7 +1496,7 @@
       isRecording = false;
       vadSpeaking = false;
       updateMicBtn(false);
-      if (!silent) setVoiceIndicator("Processing…");
+      if (!silent) setVoiceIndicator("Processing\u2026");
     }
   }
 
@@ -1399,7 +1505,6 @@
     const ext    = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
     const blob   = new Blob(audioChunks, { type: mimeType || "audio/webm" });
     if (blob.size < 1000) { setVoiceIndicator("Could not understand audio."); return; }
-
     const formData = new FormData();
     formData.append("audio", blob, `recording.${ext}`);
     try {
@@ -1418,6 +1523,13 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (isRecording) { stopRecording(); return; }
+      const val = document.getElementById("question").value.trim();
+      // Enter with empty input while bot is talking = pure interrupt
+      if (!val && isBotResponding) {
+        interruptCurrentTurn();
+        setBotResponding(false);
+        return;
+      }
       sendMessage();
     }
   });

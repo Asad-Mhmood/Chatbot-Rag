@@ -13,7 +13,7 @@ import httpx
 import tempfile
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -26,6 +26,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
+
+import asyncio
+import json
 
 load_dotenv()
 
@@ -135,7 +138,7 @@ async def create_knowledge_base(body: CreateKBRequest):
     chroma_client.get_or_create_collection(col_name)
     return JSONResponse({"kb_id": col_name, "name": col_name})
 
-# ── Chat ──────────────────────────────────────────────────────────────────────
+# ── Chat (streaming) ─────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -143,32 +146,54 @@ class ChatRequest(BaseModel):
     kb_id: str = DEFAULT_KB
 
 @app.post("/chat")
-async def chat(body: ChatRequest):
+async def chat(body: ChatRequest, request: Request):
     history = get_history(body.session_id)
     vs = get_vectorstore(body.kb_id)
     retriever = vs.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
     docs = retriever.invoke(body.question)
     context = "\n\n".join(doc.page_content for doc in docs)
-
-    chain = prompt | llm | StrOutputParser()
-    answer = chain.invoke({
-        "context": context,
-        "chat_history": history,
-        "question": body.question,
-    })
-
-    history.append(HumanMessage(content=body.question))
-    history.append(AIMessage(content=answer))
-    if len(history) > 12:
-        sessions[body.session_id] = history[-12:]
-
     sources = list({
         os.path.basename(doc.metadata.get("source", "Unknown"))
         for doc in docs
     })
 
-    return JSONResponse({"answer": answer, "sources": sources})
+    chain = prompt | llm | StrOutputParser()
+
+    async def token_stream():
+        full_answer = []
+        try:
+            async for chunk in chain.astream({
+                "context": context,
+                "chat_history": history,
+                "question": body.question,
+            }):
+                # Stop streaming if client disconnected
+                if await request.is_disconnected():
+                    break
+                full_answer.append(chunk)
+                # Send each token as a JSON line (newline-delimited JSON)
+                yield json.dumps({"token": chunk}) + "\n"
+
+            # After streaming completes, send sources and save history
+            answer_text = "".join(full_answer)
+            if answer_text:
+                history.append(HumanMessage(content=body.question))
+                history.append(AIMessage(content=answer_text))
+                if len(history) > 12:
+                    sessions[body.session_id] = history[-12:]
+
+            yield json.dumps({"done": True, "sources": sources}) + "\n"
+
+        except asyncio.CancelledError:
+            # Client disconnected mid-stream — that's fine
+            pass
+
+    return StreamingResponse(
+        token_stream(),
+        media_type="text/plain",
+        headers={"X-Accel-Buffering": "no"},  # disable nginx buffering if behind proxy
+    )
 
 # ── Session ───────────────────────────────────────────────────────────────────
 
